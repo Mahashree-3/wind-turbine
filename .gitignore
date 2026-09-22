@@ -1,1 +1,4 @@
 data/raw/
+model/
+__pycache__/
+node_modules/
