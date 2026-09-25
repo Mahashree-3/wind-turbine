@@ -6,8 +6,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import numpy as np
 
-import mock_data
-
 # Allow importing predict.py from the ../models folder
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "models"))
 from predict import predict  # noqa: E402
@@ -22,9 +20,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load the processed dataset once at startup so we have real samples to run
-# through the model. In a real deployment this would come from a live sensor
-# feed instead — for the prototype, we pick from real recorded samples.
 FEATURES_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "processed", "features.npz")
 _dataset = None
 
@@ -33,11 +28,45 @@ def get_dataset():
     global _dataset
     if _dataset is None:
         if not os.path.exists(FEATURES_PATH):
-            raise FileNotFoundError(
-                f"{FEATURES_PATH} not found. Run data/preprocess.py first."
-            )
+            raise FileNotFoundError(f"{FEATURES_PATH} not found. Run data/preprocess.py first.")
         _dataset = np.load(FEATURES_PATH)
     return _dataset
+
+
+def pick_sample():
+    """Pick one random real sample and derive everything (sensors + diagnosis) from it,
+    so the numbers shown on the dashboard are consistent with each other."""
+    dataset = get_dataset()
+    idx = random.randint(0, len(dataset["labels"]) - 1)
+
+    acoustic_sample = dataset["acoustic"][idx]
+    vibration_sample = dataset["vibration"][idx]
+
+    # Turn the raw MFCC/STFT feature arrays into single representative
+    # numbers for display — this is real signal energy from the actual
+    # recording, not a fixed constant.
+    acoustic_level = round(float(np.mean(np.abs(acoustic_sample))), 2)
+    vibration_level = round(float(np.mean(np.abs(vibration_sample))), 3)
+
+    # Temperature isn't in this dataset (KAIST has no temperature channel),
+    # so we simulate a plausible reading tied to severity for demo purposes.
+    # This is clearly a placeholder — real temperature needs a thermal sensor.
+    severity_val = int(dataset["severity"][idx])
+    simulated_temperature = round(45 + severity_val * 8 + random.uniform(-2, 2), 1)
+
+    diagnosis = predict(acoustic_sample, vibration_sample)
+
+    true_fault = ["Normal", "Inner Race", "Outer Race"][int(dataset["labels"][idx])]
+    diagnosis["true_fault_type_for_demo"] = true_fault
+
+    sensors = {
+        "acoustic": acoustic_level,
+        "vibration": vibration_level,
+        "temperature": simulated_temperature,
+        "current": "coming soon",
+    }
+
+    return sensors, diagnosis
 
 
 @app.get("/")
@@ -45,36 +74,44 @@ def root():
     return {"status": "API is running"}
 
 
+@app.get("/api/dashboard")
+def get_dashboard():
+    """Single endpoint returning sensors + diagnosis from the SAME sample."""
+    sensors, diagnosis = pick_sample()
+    return {"sensors": sensors, "diagnosis": diagnosis}
+
+
 @app.get("/api/sensors")
 def get_sensors():
-    # Sensor readings are still illustrative display values —
-    # only /api/diagnosis uses the real trained model.
-    return mock_data.SENSORS
+    sensors, _ = pick_sample()
+    return sensors
 
 
 @app.get("/api/diagnosis")
 def get_diagnosis():
-    """
-    Picks a random real sample from the processed dataset and runs it
-    through the trained model, returning a REAL prediction instead of
-    hardcoded mock data.
-    """
-    dataset = get_dataset()
-    idx = random.randint(0, len(dataset["labels"]) - 1)
-
-    acoustic_sample = dataset["acoustic"][idx]
-    vibration_sample = dataset["vibration"][idx]
-
-    result = predict(acoustic_sample, vibration_sample)
-
-    # Also include the true label for demo/debugging purposes (optional,
-    # remove if you don't want to show this on the dashboard)
-    true_fault = ["Normal", "Inner Race", "Outer Race"][int(dataset["labels"][idx])]
-    result["true_fault_type_for_demo"] = true_fault
-
-    return result
+    _, diagnosis = pick_sample()
+    return diagnosis
 
 
 @app.get("/api/trend")
 def get_trend():
-    return mock_data.TREND
+    # Still illustrative — a real trend needs a run-to-failure time series,
+    # which the current dataset doesn't provide (noted as future work).
+    trend = []
+    score = 100
+    for day in range(1, 31):
+        score -= random.uniform(1.5, 2.5)
+        trend.append({"day": day, "score": round(max(score, 0), 1)})
+    return trend
+@app.get("/api/health")
+def health_check():
+    """Quick check: is the backend up, and is the model file present?"""
+    model_path = os.path.join(os.path.dirname(__file__), "..", "models", "saved", "model.pth")
+    dataset_ready = os.path.exists(FEATURES_PATH)
+    model_ready = os.path.exists(model_path)
+
+    return {
+        "status": "ok",
+        "dataset_loaded": dataset_ready,
+        "model_loaded": model_ready,
+    }
