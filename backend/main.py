@@ -2,7 +2,8 @@ import sys
 import os
 import random
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import numpy as np
 
@@ -28,8 +29,13 @@ def get_dataset():
     global _dataset
     if _dataset is None:
         if not os.path.exists(FEATURES_PATH):
-            raise FileNotFoundError(f"{FEATURES_PATH} not found. Run data/preprocess.py first.")
-        _dataset = np.load(FEATURES_PATH)
+            raise RuntimeError(
+                f"Dataset not found at {FEATURES_PATH}. Run data/preprocess.py first."
+            )
+        try:
+            _dataset = np.load(FEATURES_PATH)
+        except Exception as e:
+            raise RuntimeError(f"Failed to load dataset: {e}")
     return _dataset
 
 
@@ -42,15 +48,9 @@ def pick_sample():
     acoustic_sample = dataset["acoustic"][idx]
     vibration_sample = dataset["vibration"][idx]
 
-    # Turn the raw MFCC/STFT feature arrays into single representative
-    # numbers for display — this is real signal energy from the actual
-    # recording, not a fixed constant.
     acoustic_level = round(float(np.mean(np.abs(acoustic_sample))), 2)
     vibration_level = round(float(np.mean(np.abs(vibration_sample))), 3)
 
-    # Temperature isn't in this dataset (KAIST has no temperature channel),
-    # so we simulate a plausible reading tied to severity for demo purposes.
-    # This is clearly a placeholder — real temperature needs a thermal sensor.
     severity_val = int(dataset["severity"][idx])
     simulated_temperature = round(45 + severity_val * 8 + random.uniform(-2, 2), 1)
 
@@ -77,32 +77,47 @@ def root():
 @app.get("/api/dashboard")
 def get_dashboard():
     """Single endpoint returning sensors + diagnosis from the SAME sample."""
-    sensors, diagnosis = pick_sample()
-    return {"sensors": sensors, "diagnosis": diagnosis}
+    try:
+        sensors, diagnosis = pick_sample()
+        return {"sensors": sensors, "diagnosis": diagnosis}
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {e}")
 
 
 @app.get("/api/sensors")
 def get_sensors():
-    sensors, _ = pick_sample()
-    return sensors
+    try:
+        sensors, _ = pick_sample()
+        return sensors
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {e}")
 
 
 @app.get("/api/diagnosis")
 def get_diagnosis():
-    _, diagnosis = pick_sample()
-    return diagnosis
+    try:
+        _, diagnosis = pick_sample()
+        return diagnosis
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {e}")
 
 
 @app.get("/api/trend")
 def get_trend():
-    # Still illustrative — a real trend needs a run-to-failure time series,
-    # which the current dataset doesn't provide (noted as future work).
     trend = []
     score = 100
     for day in range(1, 31):
         score -= random.uniform(1.5, 2.5)
         trend.append({"day": day, "score": round(max(score, 0), 1)})
     return trend
+
+
 @app.get("/api/health")
 def health_check():
     """Quick check: is the backend up, and is the model file present?"""
