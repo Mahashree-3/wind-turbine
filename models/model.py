@@ -44,7 +44,7 @@ class CNNEncoder(nn.Module):
 
 
 class CAVFNet(nn.Module):
-    def __init__(self, embed_dim=64, num_heads=4, num_fault_classes=3, num_severity_classes=3):
+    def __init__(self, embed_dim=64, num_heads=4, num_fault_classes=4, num_severity_classes=3):
         super().__init__()
 
         self.acoustic_encoder = CNNEncoder()

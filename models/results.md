@@ -1,18 +1,19 @@
 # Model Training Results
 
-- Total samples: 360 (train: 288, test: 72)
+- Total samples: 770 (train: 616, test: 154)
 - Epochs: 40
-- Test fault classification accuracy: **100.00%**
-- Test severity classification accuracy: **100.00%**
+- Test fault classification accuracy: **91.56%**
+- Test severity classification accuracy: **83.77%**
 
 ## Fault Confusion Matrix
 
 ```
-[[24  0  0]
- [ 0 24  0]
- [ 0  0 24]]
+[[ 8  1  0  1]
+ [ 0 41  0  7]
+ [ 0  1 47  0]
+ [ 1  2  0 45]]
 ```
-Labels in order: ['Normal', 'Inner Race (BPFI)', 'Outer Race (BPFO)']
+Labels in order: ['Normal', 'Outer Race', 'Ball Fault', 'Cage Fault']
 
 See training_curve.png and confusion_matrix.png in model/saved/ for plots.
 

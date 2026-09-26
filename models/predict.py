@@ -14,7 +14,7 @@ from model import CAVFNet
 
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "saved", "model.pth")
 
-FAULT_NAMES = ["Normal", "Inner Race", "Outer Race"]
+FAULT_NAMES = ["Normal", "Outer Race", "Ball Fault", "Cage Fault"]
 SEVERITY_NAMES = ["Minor", "Moderate", "Severe"]
 
 # Rule-based RUL mapping — a real RUL model needs run-to-failure labeled

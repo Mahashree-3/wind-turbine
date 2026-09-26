@@ -42,7 +42,7 @@ LEARNING_RATE = 1e-3
 TEST_SIZE = 0.2
 RANDOM_SEED = 42
 
-FAULT_NAMES = ["Normal", "Inner Race (BPFI)", "Outer Race (BPFO)"]
+FAULT_NAMES = ["Normal", "Outer Race", "Ball Fault", "Cage Fault"]
 SEVERITY_NAMES = ["Minor", "Moderate", "Severe"]
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -90,34 +90,49 @@ def train_model():
     vibration = normalize(data["vibration"])
     labels = data["labels"]
     severity = data["severity"]
+    file_id = data["file_id"] if "file_id" in data else None
 
     print(f"Loaded {len(labels)} samples")
     print(f"  Fault distribution: {np.bincount(labels)}")
     print(f"  Severity distribution: {np.bincount(severity)}")
 
-    # IMPORTANT: split by (fault, severity) GROUP, not by individual chunk.
-    # Adjacent 1-second chunks from the same source file are highly similar,
-    # so a random chunk-level split leaks near-duplicate samples between
-    # train and test and produces artificially perfect accuracy. Instead we
-    # split whole (fault, severity) groups so entire recordings go together.
-    group_ids = labels * 10 + severity  # unique id per (fault, severity) combo
-    unique_groups = np.unique(group_ids)
+    if file_id is not None:
+        # Leakage-free split: all augmented copies of the same 1-second segment
+        # (file_id = source_file * 1000 + second_index) stay together on one
+        # side of the split. We split WITHIN each fault class so every class
+        # remains represented in both train and test — with only 5 source
+        # recordings total (1 per class), holding out entire files would wipe
+        # whole classes from training, so we hold out segments instead.
+        rng = np.random.RandomState(RANDOM_SEED)
+        train_idx_list, test_idx_list = [], []
 
-    rng = np.random.RandomState(RANDOM_SEED)
-    train_idx_list, test_idx_list = [], []
-    for group in unique_groups:
-        group_indices = np.where(group_ids == group)[0]
-        rng.shuffle(group_indices)
-        split_point = int(len(group_indices) * (1 - TEST_SIZE))
-        train_idx_list.extend(group_indices[:split_point])
-        test_idx_list.extend(group_indices[split_point:])
+        for cls in np.unique(labels):
+            cls_mask = labels == cls
+            cls_segment_ids = np.unique(file_id[cls_mask])
+            rng.shuffle(cls_segment_ids)
+            n_test_segments = max(1, int(len(cls_segment_ids) * TEST_SIZE))
+            test_segments = set(cls_segment_ids[:n_test_segments])
 
-    train_idx = np.array(train_idx_list)
-    test_idx = np.array(test_idx_list)
-    print(f"  NOTE: using a leakage-aware split within each fault/severity group "
-          f"(train={len(train_idx)}, test={len(test_idx)}). This still shares source "
-          f"files between train/test at the chunk level — for a fully rigorous split, "
-          f"held-out files per condition would be needed (future work).")
+            for seg_id in cls_segment_ids:
+                seg_indices = np.where(file_id == seg_id)[0]
+                if seg_id in test_segments:
+                    test_idx_list.extend(seg_indices)
+                else:
+                    train_idx_list.extend(seg_indices)
+
+        train_idx = np.array(train_idx_list)
+        test_idx = np.array(test_idx_list)
+        print(f"  Segment-level split (leakage-free): train={len(train_idx)}, test={len(test_idx)}. "
+              f"All noisy copies of a given 1-second segment stay on one side of the split.")
+    else:
+        # Fallback if features.npz doesn't have file_id (older preprocess.py version)
+        indices = np.arange(len(labels))
+        train_idx, test_idx = train_test_split(
+            indices, test_size=TEST_SIZE, random_state=RANDOM_SEED, stratify=labels
+        )
+        print("  WARNING: no file_id found in features.npz — using a random chunk split, "
+              "which may leak information between train and test. Re-run the updated "
+              "preprocess.py to fix this.")
 
     train_ds = BearingDataset(acoustic[train_idx], vibration[train_idx], labels[train_idx], severity[train_idx])
     test_ds = BearingDataset(acoustic[test_idx], vibration[test_idx], labels[test_idx], severity[test_idx])
