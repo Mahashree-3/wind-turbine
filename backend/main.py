@@ -56,7 +56,7 @@ def pick_sample():
 
     diagnosis = predict(acoustic_sample, vibration_sample)
 
-    true_fault = ["Normal", "Inner Race", "Outer Race"][int(dataset["labels"][idx])]
+    true_fault = ["Normal", "Outer Race", "Ball Fault", "Cage Fault"][int(dataset["labels"][idx])]
     diagnosis["true_fault_type_for_demo"] = true_fault
 
     sensors = {
