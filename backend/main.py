@@ -1,8 +1,10 @@
 import sys
 import os
 import random
-
-from fastapi import FastAPI, HTTPException
+import random
+import tempfile
+import librosa
+from fastapi import FastAPI, HTTPException, File, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import numpy as np
@@ -10,7 +12,9 @@ import numpy as np
 # Allow importing predict.py from the ../models folder
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "models"))
 from predict import predict  # noqa: E402
-
+# Allow importing extract_mfcc from the ../data folder
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", "data"))
+from preprocess_mafaulda import extract_mfcc, SAMPLE_RATE, SEGMENT_LENGTH_SEC  # noqa: E402
 app = FastAPI(title="Wind Turbine Bearing Fault Diagnosis API")
 
 app.add_middleware(
@@ -130,3 +134,49 @@ def health_check():
         "dataset_loaded": dataset_ready,
         "model_loaded": model_ready,
     }
+@app.post("/api/predict-audio")
+async def predict_from_audio(file: UploadFile = File(...)):
+    """
+    Accepts a real user-uploaded audio file, extracts MFCC features from it,
+    pairs it with a REAL vibration sample from the dataset (since the model
+    needs both modalities), and returns a prediction. Response clearly marks
+    which parts came from the user's upload vs. the dataset.
+    """
+    try:
+        suffix = os.path.splitext(file.filename)[1] or ".wav"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            contents = await file.read()
+            tmp.write(contents)
+            tmp_path = tmp.name
+
+        signal, _ = librosa.load(tmp_path, sr=SAMPLE_RATE, mono=True)
+        os.unlink(tmp_path)
+
+        segment_len = int(SAMPLE_RATE * SEGMENT_LENGTH_SEC)
+        if len(signal) < segment_len:
+            signal = np.pad(signal, (0, segment_len - len(signal)))
+        else:
+            signal = signal[:segment_len]
+
+        acoustic_features = extract_mfcc(signal, SAMPLE_RATE)
+        acoustic_features = (acoustic_features - acoustic_features.mean()) / (acoustic_features.std() + 1e-8)
+
+        dataset = get_dataset()
+        vib_idx = random.randint(0, len(dataset["vibration"]) - 1)
+        vibration_features = dataset["vibration"][vib_idx]
+
+        result = predict(acoustic_features, vibration_features)
+
+        result["acoustic_source"] = f"user_uploaded_file ({file.filename})"
+        result["vibration_source"] = f"dataset_sample (index {vib_idx}) — no vibration data was uploaded"
+        result["transparency_note"] = (
+            "This model requires both acoustic and vibration input. The acoustic "
+            "features came from your uploaded audio; the vibration features came "
+            "from a real recording in the training dataset, since no vibration "
+            "sensor data was provided."
+        )
+
+        return result
+
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not process audio file: {e}")
