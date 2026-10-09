@@ -180,3 +180,39 @@ async def predict_from_audio(file: UploadFile = File(...)):
 
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Could not process audio file: {e}")
+    # ---- PASTE THIS AT THE VERY END of backend/main.py ----
+
+@app.get("/api/evaluate")
+def evaluate(n: int = 300):
+    """Run the model on n random dataset samples and return a confusion matrix."""
+    try:
+        dataset = get_dataset()
+        classes = ["Normal", "Outer Race", "Ball Fault", "Cage Fault"]
+        total = len(dataset["labels"])
+        n = max(1, min(n, total))
+        idxs = random.sample(range(total), n)
+
+        matrix = [[0] * len(classes) for _ in classes]
+        skipped = 0
+        for i in idxs:
+            result = predict(dataset["acoustic"][i], dataset["vibration"][i])
+            true_idx = int(dataset["labels"][i])
+            pred_name = result.get("fault_type")
+            if pred_name in classes and 0 <= true_idx < len(classes):
+                matrix[true_idx][classes.index(pred_name)] += 1
+            else:
+                skipped += 1
+
+        counted = n - skipped
+        correct = sum(matrix[i][i] for i in range(len(classes)))
+        return {
+            "classes": classes,
+            "matrix": matrix,
+            "n": counted,
+            "skipped": skipped,
+            "accuracy": correct / counted if counted else 0.0,
+        }
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Evaluation failed: {e}")
